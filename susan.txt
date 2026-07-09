@@ -1,0 +1,218 @@
+--// Delta/Executor GUI: Speed control, Noclip toggle, Invisible toggle
+--// Client-side only
+
+-- Utility: safe wait for LocalPlayer/Character
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local function getCharacter()
+    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+end
+
+local function setTransparencyForModel(model, alpha)
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("BasePart") then
+            d.LocalTransparencyModifier = alpha
+        elseif d:IsA("Decal") then
+            d.Transparency = math.clamp(alpha, 0, 1)
+        end
+    end
+end
+
+-- State
+local noclipEnabled = false
+local invisibleEnabled = false
+local origWalkSpeed = 16
+local lastValidSpeed = 16
+
+-- Build GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "DeltaUtilityGui"
+gui.ResetOnSpawn = false
+if syn and syn.protect_gui then
+    syn.protect_gui(gui)
+    gui.Parent = game:GetService("CoreGui")
+elseif gethui then
+    gui.Parent = gethui()
+else
+    gui.Parent = game:GetService("CoreGui")
+end
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 260, 0, 180)
+frame.Position = UDim2.new(0, 40, 0, 120)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -10, 0, 28)
+title.Position = UDim2.new(0, 10, 0, 6)
+title.BackgroundTransparency = 1
+title.Text = "Utility Panel"
+title.TextColor3 = Color3.fromRGB(235, 235, 235)
+title.TextSize = 18
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = frame
+
+local function makeButton(text, yOffset)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -20, 0, 32)
+    b.Position = UDim2.new(0, 10, 0, yOffset)
+    b.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(240, 240, 240)
+    b.TextSize = 16
+    b.Font = Enum.Font.Gotham
+    b.AutoButtonColor = true
+    b.Parent = frame
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = b
+    return b
+end
+
+local function makeLabel(text, yOffset)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, -20, 0, 20)
+    l.Position = UDim2.new(0, 10, 0, yOffset)
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextColor3 = Color3.fromRGB(210, 210, 210)
+    l.TextSize = 14
+    l.Font = Enum.Font.Gotham
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = frame
+    return l
+end
+
+-- Speed controls
+makeLabel("WalkSpeed:", 44)
+local speedBox = Instance.new("TextBox")
+speedBox.Size = UDim2.new(0, 90, 0, 28)
+speedBox.Position = UDim2.new(0, 10, 0, 66)
+speedBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+speedBox.Text = tostring(lastValidSpeed)
+speedBox.PlaceholderText = "number"
+speedBox.TextColor3 = Color3.fromRGB(240, 240, 240)
+speedBox.TextSize = 16
+speedBox.Font = Enum.Font.Gotham
+speedBox.ClearTextOnFocus = false
+speedBox.Parent = frame
+local sbCorner = Instance.new("UICorner")
+sbCorner.CornerRadius = UDim.new(0, 6)
+sbCorner.Parent = speedBox
+
+local applySpeedBtn = makeButton("Apply Speed", 66)
+applySpeedBtn.Size = UDim2.new(1, -120, 0, 28)
+applySpeedBtn.Position = UDim2.new(0, 110, 0, 66)
+
+local noclipBtn = makeButton("Noclip: OFF", 104)
+local invisBtn = makeButton("Invisible: OFF", 142)
+
+-- Handlers
+local function applySpeed()
+    local char = getCharacter()
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local n = tonumber(speedBox.Text)
+        if n and n > 0 and n < 1000 then
+            hum.WalkSpeed = n
+            lastValidSpeed = n
+        else
+            speedBox.Text = tostring(lastValidSpeed)
+        end
+    end
+end
+
+applySpeedBtn.MouseButton1Click:Connect(applySpeed)
+speedBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then applySpeed() end
+end)
+
+-- Track original WalkSpeed on spawn
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.2)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        origWalkSpeed = hum.WalkSpeed
+        if lastValidSpeed then
+            hum.WalkSpeed = lastValidSpeed
+        end
+    end
+end)
+
+-- Noclip loop
+local noclipConn
+local function setNoclip(on)
+    noclipEnabled = on
+    noclipBtn.Text = "Noclip: " .. (on and "ON" or "OFF")
+    if on then
+        if noclipConn then noclipConn:Disconnect() end
+        noclipConn = RunService.Stepped:Connect(function()
+            local char = LocalPlayer.Character
+            if not char then return end
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end)
+    else
+        if noclipConn then
+            noclipConn:Disconnect()
+            noclipConn = nil
+        end
+        local char = LocalPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
+                end
+            end
+        end
+    end
+end
+
+noclipBtn.MouseButton1Click:Connect(function()
+    setNoclip(not noclipEnabled)
+end)
+
+-- Invisible toggle
+local function setInvisible(on)
+    invisibleEnabled = on
+    invisBtn.Text = "Invisible: " .. (on and "ON" or "OFF")
+    local char = getCharacter()
+    if on then
+        setTransparencyForModel(char, 1)
+        -- Also hide face decals if any reset transparency
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("Decal") then d.Transparency = 1 end
+        end
+    else
+        setTransparencyForModel(char, 0)
+    end
+end
+
+invisBtn.MouseButton1Click:Connect(function()
+    setInvisible(not invisibleEnabled)
+end)
+
+-- Initialize with current humanoid speed
+task.defer(function()
+    local char = getCharacter()
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        origWalkSpeed = hum.WalkSpeed
+        lastValidSpeed = hum.WalkSpeed
+        speedBox.Text = tostring(lastValidSpeed)
+    end
+end)
